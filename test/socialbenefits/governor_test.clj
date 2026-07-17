@@ -1,0 +1,169 @@
+(ns socialbenefits.governor-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [socialbenefits.store :as store]
+            [socialbenefits.advisor :as advisor]
+            [socialbenefits.governor :as governor]))
+
+(defn- fresh-store []
+  (let [st (store/mem-store)]
+    (store/register-applicant! st {:applicant-id "AP-1" :name "Kobo Yamada" :verified? true})
+    (store/register-office! st {:office-id "OFF-1" :name "Kobo District Benefits Office" :verified? true})
+    st))
+
+(defn- supply-op [cost]
+  {:op :coordinate-supply-order :effect :propose :applicant-id nil :office-id "OFF-1"
+   :estimated-cost cost :stake :low :confidence 0.9
+   :rationale "documented coordinate-supply-order for office OFF-1"})
+
+(defn- log-op []
+  {:op :log-application-record :effect :propose :applicant-id "AP-1" :office-id nil
+   :stake :low :confidence 0.9
+   :rationale "documented log-application-record for applicant AP-1"})
+
+(deftest ok-verified-applicant-log-application-record
+  (let [st (fresh-store)
+        v (governor/check {} {} (log-op) st)]
+    (is (:ok? v))
+    (is (not (:hard? v)))
+    (is (not (:escalate? v)))))
+
+(deftest ok-verified-office-at-or-below-threshold-supply-order
+  (let [st (fresh-store)
+        v (governor/check {} {} (supply-op 1500) st)]
+    (is (:ok? v))))
+
+(deftest ok-at-exact-supply-cost-threshold-boundary
+  (testing "the supply-cost escalation threshold is inclusive (exactly-at-threshold does not escalate)"
+    (let [st (fresh-store)
+          v (governor/check {} {} (supply-op governor/supply-cost-escalation-threshold) st)]
+      (is (:ok? v))
+      (is (not (:escalate? v))))))
+
+(deftest hard-on-unregistered-applicant
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op) :applicant-id "ghost") st)]
+    (is (:hard? v))
+    (is (some #(= :unknown-applicant (:rule %)) (:violations v)))))
+
+(deftest hard-on-unverified-applicant
+  (let [st (fresh-store)]
+    (store/register-applicant! st {:applicant-id "AP-2" :name "Unverified" :verified? false})
+    (let [v (governor/check {} {} (assoc (log-op) :applicant-id "AP-2") st)]
+      (is (:hard? v))
+      (is (some #(= :applicant-unverified (:rule %)) (:violations v))))))
+
+(deftest hard-on-unregistered-office
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (supply-op 1000) :office-id "ghost") st)]
+    (is (:hard? v))
+    (is (some #(= :unknown-office (:rule %)) (:violations v)))))
+
+(deftest hard-on-unverified-office
+  (let [st (fresh-store)]
+    (store/register-office! st {:office-id "OFF-2" :name "Unverified" :verified? false})
+    (let [v (governor/check {} {} (assoc (supply-op 1000) :office-id "OFF-2") st)]
+      (is (:hard? v))
+      (is (some #(= :office-unverified (:rule %)) (:violations v))))))
+
+(deftest hard-on-no-actuation-violation
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op) :effect :direct-write) st)]
+    (is (:hard? v))
+    (is (some #(= :no-actuation (:rule %)) (:violations v)))))
+
+(deftest hard-on-op-not-allowed
+  (testing "an op outside the closed four-op allowlist — including anything
+            that would directly approve, deny or terminate a benefit — is a
+            permanent HARD block; no such op exists in the allowlist to begin
+            with, this asserts the governor also rejects one forged onto a
+            proposal"
+    (let [st (fresh-store)
+          v (governor/check {} {} (assoc (log-op) :op :approve-benefit-claim) st)]
+      (is (:hard? v))
+      (is (some #(= :op-not-allowed (:rule %)) (:violations v))))))
+
+(deftest hard-on-op-not-allowed-deny
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op) :op :deny-benefit-claim) st)]
+    (is (:hard? v))
+    (is (some #(= :op-not-allowed (:rule %)) (:violations v)))))
+
+(deftest hard-on-op-not-allowed-terminate
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op) :op :terminate-benefit) st)]
+    (is (:hard? v))
+    (is (some #(= :op-not-allowed (:rule %)) (:violations v)))))
+
+(deftest hard-on-scope-excluded-approval-rationale
+  (testing "a proposal on an otherwise-allowed op whose rationale names a
+            finalization/execution action for a benefit approval is a
+            permanent HARD block, independent of the op-allowlist check"
+    (let [st (fresh-store)
+          v (governor/check {} {} (assoc (log-op)
+                                          :rationale "approved the benefit claim for applicant AP-1")
+                             st)]
+      (is (:hard? v))
+      (is (some #(= :scope-excluded (:rule %)) (:violations v))))))
+
+(deftest hard-on-scope-excluded-denial-rationale
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op)
+                                        :rationale "denied the benefit claim for applicant AP-1")
+                           st)]
+    (is (:hard? v))
+    (is (some #(= :scope-excluded (:rule %)) (:violations v)))))
+
+(deftest hard-on-scope-excluded-termination-rationale
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op)
+                                        :rationale "terminated the existing benefit for applicant AP-1")
+                           st)]
+    (is (:hard? v))
+    (is (some #(= :scope-excluded (:rule %)) (:violations v)))))
+
+(deftest always-escalates-flag-eligibility-review-even-at-high-confidence
+  (testing "surfacing an application that needs human caseworker eligibility
+            review always requires human review — never auto-resolved"
+    (let [st (fresh-store)
+          v (governor/check {} {} {:op :flag-eligibility-review :effect :propose
+                                   :applicant-id "AP-1" :office-id nil
+                                   :confidence 0.99 :stake :low
+                                   :rationale "documented flag-eligibility-review for applicant AP-1"}
+                             st)]
+      (is (not (:hard? v)))
+      (is (:escalate? v)))))
+
+(deftest always-escalates-above-threshold-supply-order
+  (testing "an office-equipment supply order above the cost threshold always
+            needs human sign-off, regardless of confidence"
+    (let [st (fresh-store)
+          v (governor/check {} {} (assoc (supply-op (+ governor/supply-cost-escalation-threshold 1))
+                                          :confidence 0.99)
+                             st)]
+      (is (not (:hard? v)))
+      (is (:escalate? v)))))
+
+(deftest escalates-low-confidence
+  (let [st (fresh-store)
+        v (governor/check {} {} (assoc (log-op) :confidence 0.3) st)]
+    (is (not (:hard? v)))
+    (is (:escalate? v))))
+
+(deftest default-mock-advisor-proposals-never-self-trip-scope-exclusion
+  (testing "the default mock advisor's own rationale text for every op in the
+            closed allowlist never contains a scope-excluded finalization/
+            execution phrase for a benefit approval, denial or termination
+            (fleet-known self-trip bug class regression)"
+    (let [st (fresh-store)
+          adv (advisor/mock-advisor)
+          requests [{:op :log-application-record :applicant-id "AP-1" :stake :low}
+                    {:op :schedule-caseworker-appointment :applicant-id "AP-1" :stake :low}
+                    {:op :flag-eligibility-review :applicant-id "AP-1" :stake :low}
+                    {:op :coordinate-supply-order :office-id "OFF-1" :estimated-cost 500 :stake :low}]]
+      (doseq [req requests]
+        (let [proposal (advisor/-advise adv st req)]
+          (is (false? (governor/out-of-scope? proposal))
+              (str "op " (:op req) " self-tripped scope-exclusion: " (:rationale proposal)))
+          (let [v (governor/check {} {} proposal st)]
+            (is (not (contains? (set (map :rule (:violations v))) :scope-excluded))
+                (str "op " (:op req) " tripped :scope-excluded in governor/check"))))))))
