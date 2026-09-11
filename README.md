@@ -15,7 +15,7 @@ Government Social Benefits Officials determine eligibility for and approve/deny 
 (`socialbenefits.governor`), following the itonami actor pattern
 (ADR-2607121000): `:intake -> :advise -> :govern -> :decide -+-> :commit
 (:ok?) +-> :request-approval (:escalate?, human-in-the-loop interrupt)
-+-> :hold (:hard?)`. 25 tests / 60 assertions green (`clojure -M:test`).
++-> :hold (:hard?)`. 25 tests / 60 assertions green (`kbb -M:test`).
 
 HARD invariants (always hold, never overridable): applicant provenance
 (a proposal referencing an applicant must resolve to an independently
