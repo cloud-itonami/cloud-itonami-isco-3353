@@ -1,5 +1,5 @@
 (ns socialbenefits.governor-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [socialbenefits.store :as store]
             [socialbenefits.advisor :as advisor]
             [socialbenefits.governor :as governor]))
