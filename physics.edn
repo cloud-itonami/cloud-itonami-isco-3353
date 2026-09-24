@@ -1,0 +1,34 @@
+;; What this occupation's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:physics` runs it.
+;;
+;; README "Robotics premise": an intake and case-logistics robot performs
+;; application data entry, caseworker-appointment scheduling and office-supply
+;; coordination (ISCO 3353 government social benefits officials); it never
+;; approves, denies or terminates a benefit. Its physical work: lifting
+;; application folders from the intake counter to the data-entry station, and
+;; moving a tall case-file trolley whose stacked files raise its centre of
+;; gravity.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isco-3353"
+ :cases
+ [{:id :application-folders-to-entry-station
+   :kind :manipulator
+   :procedure "arm lifts a bundle of application folders from the intake counter to the data-entry station"
+   :params {:l1-m 0.40 :l2-m 0.35 :m1-kg 3.0 :m2-kg 2.0
+            :from [0.45 0.10] :to [0.20 0.55] :duration-s 2.0 :steps 400}
+   :sweep {:param :payload-kg :values [0.5 1.0 2.0 3.5 5.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 32.0 :basis "estimate: continuous shoulder torque of a ~3 kg-payload desktop arm"}
+   :boundary {:lo 0.1 :hi 15.0}}
+  {:id :case-file-trolley-stop
+   :kind :transport
+   :procedure "robot moves a narrow case-file trolley 25 m to the caseworker's desk and stops; the file stack height sets the centre of gravity"
+   :params {:mass-kg 40.0 :payload-kg 35.0 :distance-m 25.0 :v-max-mps 0.9 :a-max-mps2 0.4
+            :brake-decel-mps2 0.9 :drive-force-n 150.0 :crr 0.02 :support-half-length-m 0.22}
+   :sweep {:param :cog-height-m :values [0.4 0.6 0.8 1.0 1.2]}
+   :quantity :min-tipover-margin
+   :limit {:min 0.6 :basis "estimate: keep 60% of the static anti-tip moment in reserve in public waiting areas where people step into the path"}
+   :boundary {:lo 0.3 :hi 1.5}}]}
