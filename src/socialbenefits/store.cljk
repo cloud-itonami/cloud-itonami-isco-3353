@@ -1,7 +1,7 @@
 (ns socialbenefits.store
   "SSoT for the ISCO-08 3353 government social benefits officials
   documentation/logistics-coordination actor (itonami actor pattern,
-  ADR-2607121000 / CLAUDE.md Actors section; README's 'Robotics
+  ADR-2607121000 / AGENTS.md Actors section; README's 'Robotics
   premise' — an intake and case-logistics robot performs application
   data entry, appointment scheduling and office-supply coordination
   under this advisor/governor pair, which never dispatches hardware
